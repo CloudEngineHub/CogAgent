@@ -12,6 +12,31 @@ from transformers import (
 )
 from typing import List
 import spaces
+from starlette.datastructures import QueryParams
+from starlette.middleware import Middleware
+from starlette.responses import JSONResponse
+
+
+class ValidateDeepLinkMiddleware:
+    """Reject invalid deep-link IDs before Gradio treats them as paths."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            values = QueryParams(scope.get("query_string", b"")).getlist("deep_link")
+            if any(
+                value and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value)
+                for value in values
+            ):
+                response = JSONResponse(
+                    {"detail": "Invalid deep_link identifier."}, status_code=400
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
 
 stop_event = Event()
 
@@ -214,7 +239,11 @@ def main():
         stop_now_btn.click(stop_now, None, [chatbot, output_img], queue=False)
 
     demo.queue()
-    demo.launch(server_name=args.host, server_port=args.port)
+    demo.launch(
+        server_name=args.host,
+        server_port=args.port,
+        app_kwargs={"middleware": [Middleware(ValidateDeepLinkMiddleware)]},
+    )
 
 
 if __name__ == "__main__":
